@@ -416,6 +416,7 @@ impl Renderer {
                 // Set the current texture bind group on the renderpass.
                 let texture_id = cmd_params.texture_id;
 
+                // TODO:: (tex, Option<CustomRenderPipeline>)
                 let tex = self
                     .textures
                     .get(texture_id)
