@@ -415,15 +415,12 @@ impl Renderer {
 
                 // Set the current texture bind group on the renderpass.
                 let texture_id = cmd_params.texture_id;
-                println!("Texture ID {:?}", texture_id);
 
                 let tex = self
                     .textures
                     .get(texture_id)
                     .ok_or(RendererError::BadTexture(texture_id))?;
                 rpass.set_bind_group(1, &tex, &[]);
-
-                println!("Texture Count {:?}", self.textures.len_size());
 
                 // Set scissors on the renderpass.
                 let scissors = (
