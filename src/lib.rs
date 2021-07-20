@@ -1,6 +1,7 @@
 use imgui::{
     Context, DrawCmd::Elements, DrawData, DrawIdx, DrawList, DrawVert, TextureId, Textures,
 };
+use shared::Shared;
 use smallvec::SmallVec;
 use std::fmt;
 use std::mem::size_of;
@@ -85,146 +86,6 @@ impl<'a> Default for TextureConfig<'a> {
     }
 }
 
-/// A container for a bindable texture.
-pub struct Texture {
-    texture: wgpu::Texture,
-    view: wgpu::TextureView,
-    bind_group: BindGroup,
-    size: Extent3d,
-}
-
-impl Texture {
-    /// Create a `Texture` from its raw parts.
-    pub fn from_raw_parts(
-        texture: wgpu::Texture,
-        view: wgpu::TextureView,
-        bind_group: BindGroup,
-        size: Extent3d,
-    ) -> Self {
-        Self {
-            texture,
-            view,
-            bind_group,
-            size,
-        }
-    }
-
-    /// Create a new GPU texture width the specified `config`.
-    pub fn new(device: &Device, renderer: &Renderer, config: TextureConfig) -> Self {
-        // Create the wgpu texture.
-        let texture = device.create_texture(&TextureDescriptor {
-            label: config.label,
-            size: config.size,
-            mip_level_count: config.mip_level_count,
-            sample_count: config.sample_count,
-            dimension: config.dimension,
-            format: config.format.unwrap_or(renderer.config.texture_format),
-            usage: config.usage,
-        });
-
-        // Extract the texture view.
-        let view = texture.create_view(&TextureViewDescriptor::default());
-
-        // Create the texture sampler.
-        let sampler = device.create_sampler(&SamplerDescriptor {
-            label: Some("imgui-wgpu sampler"),
-            address_mode_u: AddressMode::ClampToEdge,
-            address_mode_v: AddressMode::ClampToEdge,
-            address_mode_w: AddressMode::ClampToEdge,
-            mag_filter: FilterMode::Linear,
-            min_filter: FilterMode::Linear,
-            mipmap_filter: FilterMode::Linear,
-            lod_min_clamp: -100.0,
-            lod_max_clamp: 100.0,
-            compare: None,
-            anisotropy_clamp: None,
-            border_color: None,
-        });
-
-        // Create the texture bind group from the layout.
-        let bind_group = device.create_bind_group(&BindGroupDescriptor {
-            label: config.label,
-            layout: &renderer.texture_layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: BindingResource::TextureView(&view),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: BindingResource::Sampler(&sampler),
-                },
-            ],
-        });
-
-        Self {
-            texture,
-            view,
-            bind_group,
-            size: config.size,
-        }
-    }
-
-    /// Write `data` to the texture.
-    ///
-    /// - `data`: 32-bit RGBA bitmap data.
-    /// - `width`: The width of the source bitmap (`data`) in pixels.
-    /// - `height`: The height of the source bitmap (`data`) in pixels.
-    pub fn write(&self, queue: &Queue, data: &[u8], width: u32, height: u32) {
-        queue.write_texture(
-            // destination (sub)texture
-            ImageCopyTexture {
-                texture: &self.texture,
-                mip_level: 0,
-                origin: Origin3d { x: 0, y: 0, z: 0 },
-            },
-            // source bitmap data
-            data,
-            // layout of the source bitmap
-            ImageDataLayout {
-                offset: 0,
-                bytes_per_row: NonZeroU32::new(width * 4),
-                rows_per_image: NonZeroU32::new(height),
-            },
-            // size of the source bitmap
-            Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-        );
-    }
-
-    /// The width of the texture in pixels.
-    pub fn width(&self) -> u32 {
-        self.size.width
-    }
-
-    /// The height of the texture in pixels.
-    pub fn height(&self) -> u32 {
-        self.size.height
-    }
-
-    /// The depth of the texture.
-    pub fn depth(&self) -> u32 {
-        self.size.depth_or_array_layers
-    }
-
-    /// The size of the texture in pixels.
-    pub fn size(&self) -> Extent3d {
-        self.size
-    }
-
-    /// The underlying `wgpu::Texture`.
-    pub fn texture(&self) -> &wgpu::Texture {
-        &self.texture
-    }
-
-    /// The `wgpu::TextureView` of the underlying texture.
-    pub fn view(&self) -> &wgpu::TextureView {
-        &self.view
-    }
-}
 
 /// Configuration for the renderer.
 pub struct RendererConfig<'vs, 'fs> {
@@ -287,7 +148,7 @@ pub struct Renderer {
     uniform_buffer: Buffer,
     uniform_bind_group: BindGroup,
     /// Textures of the font atlas and all images.
-    pub textures: Textures<Texture>,
+    pub textures: Textures<Shared<BindGroup>>,
     texture_layout: BindGroupLayout,
     index_buffers: SmallVec<[Buffer; 4]>,
     vertex_buffers: SmallVec<[Buffer; 4]>,
@@ -554,11 +415,15 @@ impl Renderer {
 
                 // Set the current texture bind group on the renderpass.
                 let texture_id = cmd_params.texture_id;
+                println!("Texture ID {:?}", texture_id);
+
                 let tex = self
                     .textures
                     .get(texture_id)
                     .ok_or(RendererError::BadTexture(texture_id))?;
-                rpass.set_bind_group(1, &tex.bind_group, &[]);
+                rpass.set_bind_group(1, &tex, &[]);
+
+                println!("Texture Count {:?}", self.textures.len_size());
 
                 // Set scissors on the renderpass.
                 let scissors = (
@@ -621,7 +486,7 @@ impl Renderer {
 
         // Create font texture and upload it.
         let handle = fonts.build_rgba32_texture();
-        let font_texture_cnfig = TextureConfig {
+        let config = TextureConfig {
             label: Some("imgui-wgpu font atlas"),
             size: Extent3d {
                 width: handle.width,
@@ -631,9 +496,80 @@ impl Renderer {
             ..Default::default()
         };
 
-        let font_texture = Texture::new(device, self, font_texture_cnfig);
-        font_texture.write(&queue, handle.data, handle.width, handle.height);
-        fonts.tex_id = self.textures.insert(font_texture);
+        let (font_texture, bind_group) = {
+            // Create the wgpu texture.
+            let texture = device.create_texture(&TextureDescriptor {
+                label: config.label,
+                size: config.size,
+                mip_level_count: config.mip_level_count,
+                sample_count: config.sample_count,
+                dimension: config.dimension,
+                format: config.format.unwrap_or(self.config.texture_format),
+                usage: config.usage,
+            });
+
+            // Extract the texture view.
+            let view = texture.create_view(&TextureViewDescriptor::default());
+
+            // Create the texture sampler.
+            let sampler = device.create_sampler(&SamplerDescriptor {
+                label: Some("imgui-wgpu sampler"),
+                address_mode_u: AddressMode::ClampToEdge,
+                address_mode_v: AddressMode::ClampToEdge,
+                address_mode_w: AddressMode::ClampToEdge,
+                mag_filter: FilterMode::Linear,
+                min_filter: FilterMode::Linear,
+                mipmap_filter: FilterMode::Linear,
+                lod_min_clamp: -100.0,
+                lod_max_clamp: 100.0,
+                compare: None,
+                anisotropy_clamp: None,
+                border_color: None,
+            });
+
+            // Create the texture bind group from the layout.
+            let bind_group = device.create_bind_group(&BindGroupDescriptor {
+                label: config.label,
+                layout: &self.texture_layout,
+                entries: &[
+                    BindGroupEntry {
+                        binding: 0,
+                        resource: BindingResource::TextureView(&view),
+                    },
+                    BindGroupEntry {
+                        binding: 1,
+                        resource: BindingResource::Sampler(&sampler),
+                    },
+                ],
+            });
+
+            (texture, bind_group)
+        };
+
+        queue.write_texture(
+            // destination (sub)texture
+            ImageCopyTexture {
+                texture: &font_texture,
+                mip_level: 0,
+                origin: Origin3d { x: 0, y: 0, z: 0 },
+            },
+            // source bitmap data
+            handle.data,
+            // layout of the source bitmap
+            ImageDataLayout {
+                offset: 0,
+                bytes_per_row: NonZeroU32::new(handle.width * 4),
+                rows_per_image: NonZeroU32::new(handle.height),
+            },
+            // size of the source bitmap
+            Extent3d {
+                width: handle.width,
+                height: handle.height,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        fonts.tex_id = self.textures.insert(Shared::new(bind_group));
         // Clear imgui texture data to save memory.
         fonts.clear_tex_data();
     }

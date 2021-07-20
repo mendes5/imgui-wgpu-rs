@@ -78,3 +78,7 @@ winit = "0.24"
 
 [package.metadata.docs.rs]
 all-features = true
+
+[dependencies.shared]
+path = "../shared"
+version = "0.1.0"
