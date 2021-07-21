@@ -148,14 +148,89 @@ pub struct Renderer {
     uniform_buffer: Buffer,
     uniform_bind_group: BindGroup,
     /// Textures of the font atlas and all images.
-    pub textures: Textures<Shared<BindGroup>>,
+    pub textures: Textures<(Shared<BindGroup>, Option<Shared<RenderPipeline>>)>,
     texture_layout: BindGroupLayout,
     index_buffers: SmallVec<[Buffer; 4]>,
     vertex_buffers: SmallVec<[Buffer; 4]>,
     config: RendererConfig<'static, 'static>,
+    uniform_layout: BindGroupLayout,
+    vs_module: ShaderModule,
+    depth_format: Option<TextureFormat>,
 }
 
 impl Renderer {
+    pub fn create_pipeline(
+        &self,
+        device: &Device,
+        texture_layout: BindGroupLayout,
+        fs_module: ShaderModule,
+        target_frame_format: TextureFormat,
+    ) -> RenderPipeline {
+        // Create the render pipeline layout.
+        let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+            label: Some("imgui-wgpu pipeline layout"),
+            bind_group_layouts: &[&self.uniform_layout, &texture_layout],
+            push_constant_ranges: &[],
+        });
+
+        // Create the render pipeline.
+        // Create the render pipeline.
+        let pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
+            label: Some("imgui-wgpu pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: VertexState {
+                module: &self.vs_module,
+                entry_point: "main",
+                buffers: &[VertexBufferLayout {
+                    array_stride: size_of::<DrawVert>() as BufferAddress,
+                    step_mode: InputStepMode::Vertex,
+                    attributes: &vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Unorm8x4],
+                }],
+            },
+            fragment: Some(FragmentState {
+                module: &fs_module,
+                entry_point: "main",
+                targets: &[ColorTargetState {
+                    format: target_frame_format,
+                    blend: Some(BlendState {
+                        color: BlendComponent {
+                            src_factor: BlendFactor::SrcAlpha,
+                            dst_factor: BlendFactor::OneMinusSrcAlpha,
+                            operation: BlendOperation::Add,
+                        },
+                        alpha: BlendComponent {
+                            src_factor: BlendFactor::OneMinusDstAlpha,
+                            dst_factor: BlendFactor::One,
+                            operation: BlendOperation::Add,
+                        },
+                    }),
+                    write_mask: ColorWrite::ALL,
+                }],
+            }),
+            primitive: PrimitiveState {
+                topology: PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: FrontFace::Cw,
+                cull_mode: None,
+                polygon_mode: PolygonMode::Fill,
+                clamp_depth: false,
+                conservative: false,
+            },
+            depth_stencil: self.depth_format.map(|format| wgpu::DepthStencilState {
+                format,
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::Always,
+                stencil: wgpu::StencilState::default(),
+                bias: DepthBiasState::default(),
+            }),
+            multisample: MultisampleState {
+                count: self.config.sample_count,
+                ..Default::default()
+            },
+        });
+
+        pipeline
+    }
     /// Create an entirely new imgui wgpu renderer.
     pub fn new(
         imgui: &mut Context,
@@ -299,6 +374,9 @@ impl Renderer {
         });
 
         let mut renderer = Self {
+            uniform_layout,
+            vs_module,
+            depth_format,
             pipeline,
             uniform_buffer,
             uniform_bind_group,
@@ -416,8 +494,7 @@ impl Renderer {
                 // Set the current texture bind group on the renderpass.
                 let texture_id = cmd_params.texture_id;
 
-                // TODO:: (tex, Option<CustomRenderPipeline>)
-                let tex = self
+                let (tex, render_pipeline) = self
                     .textures
                     .get(texture_id)
                     .ok_or(RendererError::BadTexture(texture_id))?;
@@ -434,7 +511,15 @@ impl Renderer {
 
                 // Draw the current batch of vertices with the renderpass.
                 let end = start + count as u32;
-                rpass.draw_indexed(start..end, 0, 0..1);
+
+                if let Some(render_pipeline) = render_pipeline {
+                    rpass.set_pipeline(render_pipeline);
+                    rpass.draw_indexed(start..end, 0, 0..1);
+                    rpass.set_pipeline(&self.pipeline);
+                } else {
+                    rpass.draw_indexed(start..end, 0, 0..1);
+                }
+
                 start = end;
             }
         }
@@ -567,7 +652,7 @@ impl Renderer {
             },
         );
 
-        fonts.tex_id = self.textures.insert(Shared::new(bind_group));
+        fonts.tex_id = self.textures.insert((Shared::new(bind_group), None));
         // Clear imgui texture data to save memory.
         fonts.clear_tex_data();
     }
