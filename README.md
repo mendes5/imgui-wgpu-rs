@@ -1,3 +1,30 @@
+# Details about this fork
+
+It adds support for custom texture readers, now you can sample a in multiple different ways, instead of just reading its data on screen.
+
+![screenshot](imgs/readme.png)
+
+Now instead of just inserting the texture, you need to also pass a optional custom texture render pipeline to `renderer.textures`.
+The pipeline must be created with `renderer.create_pipeline` with only accepts a fragment shader module, this module will be the texture reader.
+
+```rs
+let module = device.create_shader_module(&wgpu::include_spirv!("texture.frag.spv"));
+
+let pipeline = renderer.create_pipeline(
+    &device,
+    texture_layout,
+    module,
+    main_render_target_format,
+);
+
+let texture_id = renderer.textures.insert((
+    depth_texture_bind_group,
+    Some(pipeline),
+));
+```
+
+_Original readme:_
+
 # dear imgui wgpu-rs renderer
 
 ![GitHub Workflow Status](https://img.shields.io/github/workflow/status/Yatekii/imgui-wgpu-rs/Build)
