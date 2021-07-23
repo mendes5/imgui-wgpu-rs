@@ -86,7 +86,6 @@ impl<'a> Default for TextureConfig<'a> {
     }
 }
 
-
 /// Configuration for the renderer.
 pub struct RendererConfig<'vs, 'fs> {
     pub texture_format: TextureFormat,
@@ -142,13 +141,14 @@ impl RendererConfig<'_, '_> {
         )
     }
 }
+pub type TextureStorage = (Shared<BindGroup>, Option<Shared<RenderPipeline>>);
 
 pub struct Renderer {
     pipeline: RenderPipeline,
     uniform_buffer: Buffer,
     uniform_bind_group: BindGroup,
     /// Textures of the font atlas and all images.
-    pub textures: Textures<(Shared<BindGroup>, Option<Shared<RenderPipeline>>)>,
+    pub textures: Textures<TextureStorage>,
     texture_layout: BindGroupLayout,
     index_buffers: SmallVec<[Buffer; 4]>,
     vertex_buffers: SmallVec<[Buffer; 4]>,
